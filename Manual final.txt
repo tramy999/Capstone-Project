@@ -1,0 +1,491 @@
+================================================================================
+    ANLEITUNG ZUM ANSCHLUSS UND BETRIEB DES LERNÜBERWACHUNGSSYSTEMS
+================================================================================
+
+I. EINFÜHRUNG
+================================================================================
+
+Das Lernüberwachungssystem wurde entwickelt, um die Verwaltung von Lern- und Ruhezeiten zu unterstützen sowie die Haltung und die Lernumgebung zu überwachen. Das System umfasst folgende Hauptfunktionen:
+
+1. Verfolgung der Lern- und Schlafzeiten der letzten 24 Stunden
+2. Berechnung einer Punktzahl basierend auf der Differenz zwischen Lern- und Schlafzeit
+3. Warnung bei schlechter Sitzhaltung (z.B. seitliches Lehnen, zu nah am Tisch)
+4. Überwachung der Umgebung (Temperatur, Luftfeuchtigkeit, Beleuchtung)
+5. Automatische Erinnerung an eine Pause nach 45 Minuten ununterbrochenem Lernen
+6. Warnung bei Gesundheits- und Lerngewohnheitsproblemen
+
+================================================================================
+II. ANSCHLUSSPLÄNE
+================================================================================
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                      PRINZIP-SCHALTPLAN DES SYSTEMS                        │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+                            ┌───────────────────┐
+                            │    ESP32 DevKit   │
+                            │                   │
+                            │  ┌─────────────┐  │
+                            │  │   ESP32     │  │
+                            │  │  Prozessor  │  │
+                            │  └─────────────┘  │
+                            └───────────────────┘
+                                      │
+          ┌───────────────────────────┼───────────────────────────┐
+          │                           │                           │
+          │                           │                           │
+    ┌─────▼─────┐             ┌──────▼──────┐            ┌──────▼──────┐
+    │  I2C-Bus  │             │  GPIO-Pins  │            │   Strom     │
+    │ (SCL/SDA) │             │             │            │  (3.3V/5V)  │
+    └─────┬─────┘             └──────┬──────┘            └──────┬──────┘
+          │                          │                          │
+     ┌────┴────┐                     │                     ┌────┴────┐
+     │         │                     │                     │         │
+┌────▼────┐ ┌──▼──────┐    ┌────────┴────────┐     ┌──────▼─────┐ │
+│  OLED   │ │   RTC   │    │    GPIO I/O     │     │ Sensoren   │ │
+│ SSD1306 │ │ DS1307  │    │                 │     │ & Geräte   │ │
+│         │ │         │    │                 │     │            │ │
+│ 128x64  │ │ Uhr +   │    │  Eingabegeräte  │     └────────────┘ │
+│ Display │ │Batterie │    │  - Taste 26     │                    │
+└─────────┘ └─────────┘    │  - Taste 27     │                    │
+                            │  - LDR (4)      │                    │
+  SCL: GPIO22               │                 │     DHT11 (13)     │
+  SDA: GPIO21               │  Ultraschall 1  │     LED Rot (32)   │
+  I2C Addr: 0x3C            │  - Trig: 12     │     LED Grün (19)  │
+                            │  - Echo: 14     │     Buzzer (15)    │
+                            │                 │                    │
+                            │  Ultraschall 2  │     HC-SR04 #1     │
+                            │  - Trig: 25     │     HC-SR04 #2     │
+                            │  - Echo: 33     │                    │
+                            └─────────────────┘                    │
+                                                                   │
+                                      ┌────────────────────────────┘
+                                      │
+                                   Gemeinsame
+                                    Masse (GND)
+
+================================================================================
+          DETAILIERTER ANSCHLUSS EINZELNER KOMPONENTEN
+================================================================================
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ 1. TASTEN (Buttons) - INPUT_PULLUP                                         │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+         ESP32                        Lernen-Taste
+       ┌────────┐                    ┌────────┐
+       │ GPIO26 │────────────────────│   SW1  │
+       │        │                    │        │
+       │  GND   │────────┐           └───┬────┘
+       └────────┘        │               │
+                         └───────────────┘
+                         
+         ESP32                        Schlafen-Taste
+       ┌────────┐                    ┌────────┐
+       │ GPIO27 │────────────────────│   SW2  │
+       │        │                    │        │
+       │  GND   │────────┐           └───┬────┘
+       └────────┘        │               │
+                         └───────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ 2. OLED-DISPLAY SSD1306 (I2C) - 128x64 Pixel                               │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+         ESP32                      OLED SSD1306
+       ┌────────┐                  ┌──────────────┐
+       │ 3.3V   │──────────────────│ VCC          │
+       │        │                  │              │
+       │  GND   │──────────────────│ GND          │
+       │        │                  │              │
+       │ GPIO22 │──────────────────│ SCL (Clock)  │
+       │ (SCL)  │                  │              │
+       │        │                  │              │
+       │ GPIO21 │──────────────────│ SDA (Data)   │
+       │ (SDA)  │                  │              │
+       └────────┘                  └──────────────┘
+                                   I2C-Adresse: 0x3C
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ 3. RTC DS1307 (I2C) - Echtzeituhr mit CR2032-Batterie                     │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+         ESP32                      RTC DS1307
+       ┌────────┐                  ┌──────────────┐
+       │ 3.3V   │──────────────────│ VCC          │
+       │        │                  │              │
+       │  GND   │──────────────────│ GND          │
+       │        │                  │              │
+       │ GPIO22 │──────────────────│ SCL (Clock)  │◄─┐
+       │ (SCL)  │                  │              │  │ Gemeinsam mit
+       │        │                  │              │  │ OLED
+       │ GPIO21 │──────────────────│ SDA (Data)   │◄─┘
+       │ (SDA)  │                  │              │
+       └────────┘                  │   [Batterie] │
+                                   │   CR2032 3V  │
+                                   └──────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ 4. SENSOR DHT11 - Temperatur und Luftfeuchtigkeit                          │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+         ESP32                        DHT11
+       ┌────────┐                  ┌──────────┐
+       │  5V    │──────────────────│ VCC (+)  │
+       │        │                  │          │
+       │  GND   │──────────────────│ GND (-)  │
+       │        │                  │          │
+       │ GPIO13 │──────────────────│ DATA     │
+       │        │                  │          │
+       └────────┘                  │   [||]   │
+                                   │  Sensor  │
+                                   └──────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ 5. LICHTSENSOR LDR - Lichtabhängiger Widerstand                            │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+         ESP32                        LDR-Modul
+       ┌────────┐                  ┌──────────────┐
+       │ 3.3V   │──────────────────│ VCC          │
+       │        │                  │              │
+       │  GND   │──────────────────│ GND          │
+       │        │                  │              │
+       │ GPIO4  │──────────────────│ DO (Digital) │
+       │        │                  │              │
+       └────────┘                  │    [LDR]     │
+                                   │  Fotozelle   │
+                                   └──────────────┘
+                                   HIGH = Dunkel (Dark)
+                                   LOW = Hell (Light)
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ 6. ULTRASCHALLSENSOR HC-SR04 #1 - Erkennung schlechter Sitzhaltung        │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+         ESP32                      HC-SR04 #1
+       ┌────────┐                  ┌──────────────┐
+       │  5V    │──────────────────│ VCC          │
+       │        │                  │              │
+       │  GND   │──────────────────│ GND          │
+       │        │                  │              │
+       │ GPIO12 │──────────────────│ Trig         │
+       │        │                  │              │
+       │ GPIO14 │──────────────────│ Echo         │
+       │        │                  │              │
+       └────────┘                  │  [T]    [R]  │
+                                   │ Senden Empf.│
+                                   └──────────────┘
+                                   Seitlich platzieren,
+                                   um schlechte Haltung zu erkennen
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ 7. ULTRASCHALLSENSOR HC-SR04 #2 - Erkennung "zu nah am Tisch"             │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+         ESP32                      HC-SR04 #2
+       ┌────────┐                  ┌──────────────┐
+       │  5V    │──────────────────│ VCC          │
+       │        │                  │              │
+       │  GND   │──────────────────│ GND          │
+       │        │                  │              │
+       │ GPIO25 │──────────────────│ Trig         │
+       │        │                  │              │
+       │ GPIO33 │──────────────────│ Echo         │
+       │        │                  │              │
+       └────────┘                  │  [T]    [R]  │
+                                   │ Senden Empf.│
+                                   └──────────────┘
+                                   Vor dem Gesicht platzieren,
+                                   um Augen-Tisch-Abstand zu messen
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ 8. ROTE LED - Warnung (Warning LED)                                       │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+         ESP32                    
+       ┌────────┐                    Rote LED
+       │ GPIO32 │────────┬──[R]──┬──(>|)───┬──┐
+       │        │        │ 220Ω  │   LED   │  │
+       │  GND   │────────┼───────┴─────────┴──┘
+       └────────┘        │
+                         └─ Vorwiderstand
+
+         HIGH = LED an (Warnung aktiv)
+         LOW = LED aus
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ 9. GRÜNE LED - Pause (Rest LED)                                           │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+         ESP32                    
+       ┌────────┐                    Grüne LED
+       │ GPIO19 │────────┬──[R]──┬──(>|)───┬──┐
+       │        │        │ 220Ω  │   LED   │  │
+       │  GND   │────────┼───────┴─────────┴──┘
+       └────────┘        │
+                         └─ Vorwiderstand
+
+         HIGH = LED an (Pausenzeit - 5 Minuten)
+         LOW = LED aus
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ 10. SUMMER (Buzzer) - Active Low                                          │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+         ESP32                      Summer
+       ┌────────┐                  ┌──────┐
+       │ GPIO15 │──────────────────│  +   │
+       │        │                  │      │
+       │  GND   │──────────────────│  -   │
+       │        │                  │      │
+       └────────┘                  │ [♪]  │
+                                   │Buzzer│
+                                   └──────┘
+         LOW = Summer ertönt (Aktiv)
+         HIGH = Summer stumm (Inaktiv)
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    ÜBERSICHTS-SCHALTPLAN                                   │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+                             ╔════════════════╗
+                             ║   ESP32 WROOM  ║
+                             ║    DevKit      ║
+                             ╚════════════════╝
+                                     │
+    ┌────────────────────────────────┼────────────────────────────────┐
+    │                                │                                │
+    │  I2C-Bus (SCL=22, SDA=21)      │  Digital GPIO                  │  Strom
+    │                                │                                │
+    ├─► OLED (0x3C)                  ├─► Taste Lernen (26)            ├─► 5V
+    │                                │                                │   │
+    ├─► RTC DS1307                   ├─► Taste Schlafen (27)          │   ├─► DHT11
+    │                                │                                │   │
+    │                                ├─► LDR (4)                      │   ├─► HC-SR04 #1
+    │                                │                                │   │
+    │                                ├─► LED Rot (32)                 │   └─► HC-SR04 #2
+    │                                │                                │
+    │                                ├─► LED Grün (19)                ├─► 3.3V
+    │                                │                                │   │
+    │                                ├─► Buzzer (15)                  │   ├─► OLED
+    │                                │                                │   │
+    │                                ├─► US1 Trig (12)                │   ├─► RTC
+    │                                │                                │   │
+    │                                ├─► US1 Echo (14)                │   └─► LDR
+    │                                │                                │
+    │                                ├─► US2 Trig (25)                └─► GND (Gemeinsam)
+    │                                │                                    │
+    │                                └─► US2 Echo (33)                    └─► Alle GND-Punkte
+    │                                                                         verbunden
+    └────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                        ANSCHLUSSPIN-ZUSAMMENFASSUNG                        │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌────────────┬──────────────┬─────────────────────────────────────────────────┐
+│  GPIO Pin  │  Komponente  │  Funktion                                       │
+├────────────┼──────────────┼─────────────────────────────────────────────────┤
+│   GPIO 4   │  LDR         │  Auslesen Lichtsensor (INPUT_PULLUP)           │
+│   GPIO 12  │  US1 Trig    │  Trigger Ultraschallsensor 1 (OUTPUT)          │
+│   GPIO 13  │  DHT11       │  Daten Temperatur/Feuchtigkeit (INPUT)         │
+│   GPIO 14  │  US1 Echo    │  Echo Ultraschallsensor 1 (INPUT)              │
+│   GPIO 15  │  Buzzer      │  Steuerung Summer (OUTPUT, Active Low)         │
+│   GPIO 19  │  LED Grün    │  Grüne LED für Pause (OUTPUT)                  │
+│   GPIO 21  │  I2C SDA     │  I2C Data (OLED + RTC)                          │
+│   GPIO 22  │  I2C SCL     │  I2C Clock (OLED + RTC)                         │
+│   GPIO 25  │  US2 Trig    │  Trigger Ultraschallsensor 2 (OUTPUT)          │
+│   GPIO 26  │  Taste ST    │  Taste Lernen (INPUT_PULLUP, Interrupt)        │
+│   GPIO 27  │  Taste SL    │  Taste Schlafen (INPUT_PULLUP, Interrupt)      │
+│   GPIO 32  │  LED Rot     │  Rote Warn-LED (OUTPUT)                         │
+│   GPIO 33  │  US2 Echo    │  Echo Ultraschallsensor 2 (INPUT)              │
+└────────────┴──────────────┴─────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                      STROMVERSORGUNGSVERTEILUNG                            │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+
+1. TASTEN (Button)
+--------------------
+   • Taste Start/Ende Lernen:
+     - GPIO 26 → Ein Anschluss der Taste
+     - GND     → Anderer Anschluss der Taste
+   
+   • Taste Start/Ende Schlafen:
+     - GPIO 27 → Ein Anschluss der Taste
+     - GND     → Anderer Anschluss der Taste
+
+2. OLED-DISPLAY (SSD1306 128x64)
+----------------------------------
+   • GND      → GND ESP32
+   • VCC      → 3.3V ESP32
+   • SCL      → GPIO 22 (I2C Clock)
+   • SDA      → GPIO 21 (I2C Data)
+
+3. RTC DS1307 (Echtzeituhr)
+--------------------------------------
+   • GND      → GND ESP32
+   • VCC      → 3.3V ESP32
+   • SCL      → GPIO 22 (I2C Clock - gemeinsam mit OLED)
+   • SDA      → GPIO 21 (I2C Data - gemeinsam mit OLED)
+
+4. SENSOR DHT11 (Temperatur und Luftfeuchtigkeit)
+--------------------------------------
+   • VCC      → 5V ESP32
+   • GND      → GND ESP32
+   • DATA     → GPIO 13
+
+5. SENSOR LDR (Licht)
+---------------------------
+   • VCC      → 3.3V ESP32
+   • GND      → GND ESP32
+   • DATA     → GPIO 4
+
+6. ULTRASCHALLSENSOR HC-SR04 (Erster - Erkennung schlechter Haltung)
+----------------------------------------------------------------
+   • VCC      → 5V ESP32
+   • GND      → GND ESP32
+   • Trig     → GPIO 12
+   • Echo     → GPIO 14
+
+7. ULTRASCHALLSENSOR HC-SR04 (Zweiter - Erkennung "zu nah am Tisch")
+--------------------------------------------------------------
+   • VCC      → 5V ESP32
+   • GND      → GND ESP32
+   • Trig     → GPIO 25 
+   • Echo     → GPIO 33
+
+8. ROTE LED (Warnung)
+--------------------
+   • Plus-Pol (Anode) → GPIO 32 (über 220Ω-Widerstand)
+   • Minus-Pol (Kathode)  → GND
+
+9. GRÜNE LED (Pause)
+----------------------------
+   • Plus-Pol (Anode) → GPIO 19 (über 220Ω-Widerstand)
+   • Minus-Pol (Kathode)  → GND
+
+10. SUMMER (Buzzer)
+----------------
+   • Plus-Pol → GPIO 15
+   • Minus-Pol    → GND
+   • Hinweis: Summer active low (LOW = ein, HIGH = aus)
+
+================================================================================
+          LISTE DER BENÖTIGTEN KOMPONENTEN
+================================================================================
+
+┌────┬──────────────────────┬────────┬──────────────────────────────────────┐
+│ Nr.│  Komponentenname     │  Anzahl│  Anmerkung                           │
+├────┼──────────────────────┼────────┼──────────────────────────────────────┤
+│ 1  │  ESP32 DevKit        │   1    │  Haupt-Mikrocontroller               │
+│ 2  │  OLED SSD1306 I2C    │   1    │  Display 128x64, Adresse 0x3C       │
+│ 3  │  RTC DS1307          │   1    │  Echtzeituhr + CR2032-Batterie       │
+│ 4  │  DHT11               │   1    │  Temperatur-/Luftfeuchtigkeitssensor│
+│ 5  │  LDR-Modul           │   1    │  Lichtsensor (digitaler Ausgang)    │
+│ 6  │  HC-SR04             │   2    │  Ultraschallsensor                   │
+│ 7  │  Taste               │   2    │  Taste Lernen und Taste Schlafen     │
+│ 8  │  LED 5mm Rot         │   1    │  Warnung                             │
+│ 9  │  LED 5mm Grün        │   1    │  Pause                               │
+│ 10 │  Summer (Buzzer)     │   1    │  Active low, 5V                      │
+│ 11 │  Widerstand 220Ω     │   2    │  Für 2 LEDs                          │
+│ 12 │  Steckbrett          │   1    │  Oder Platine zum Löten              │
+│ 13 │  Verbindungskabel    │  20+   │  Verschiedene Farben zur Unterscheidung│
+│ 14 │  Netzteil 5V/2A      │   1    │  Adapter oder USB                    │
+│ 15 │  Batterie CR2032     │   1    │  Für RTC DS1307                      │
+└────┴──────────────────────┴────────┴──────────────────────────────────────┘
+
+================================================================================
+III. BETRIEBSWEISE
+================================================================================
+
+1. SYSTEMSTART
+--------------------- 
+   - Beim Einschalten führt das System folgende Schritte durch:
+     • Initialisierung aller Komponenten (OLED, RTC, DHT11, Sensoren)
+     • Überprüfung der RTC-Verbindung
+     • Anzeige des Startbildschirms
+     • Falls die RTC nicht eingestellt ist, setzt das System die Zeit automatisch basierend auf der Compile-Zeit
+
+2. HAUPTBILDSCHIRM (mainDisplay)
+---------------------------------
+   Zeigt folgende Informationen an:
+   • Zeile 1: Aktuelle Zeit (HH:MM) | Punktzahl
+   • Zeile 2: Lernzeit (ST: X.XXh) | Schlafzeit (SL: X.XXh)
+   • Zeile 3: Temperatur (T: XX.X°C) | Luftfeuchtigkeit (H: XX.X%)
+   • Zeile 4: Abstand Sensor 1 (Dis1: XXcm)
+   • Zeile 5: Abstand Sensor 2 (Dis2: XXcm)
+
+3. WARNBILDSCHIRM (warningDisplay) 
+---------------------------------------
+   Zeigt verschiedene Warnungen an:
+   • "Study too much!" - Wenn Lernen > 6 Stunden
+   • "Need sleep more!" - Wenn Schlaf < 7 Stunden
+   • "High hum, open door!" - Wenn Luftfeuchtigkeit > 80%
+   • "Low hum, drink water!" - Wenn Luftfeuchtigkeit < 40%
+   • "Too late, sleep now!" - Wenn Lernen zwischen 0-4 Uhr morgens beginnt
+   • "Turn on lamp!" - Wenn Licht unzureichend ist
+   • "Sit up straight!" - Wenn Sensor 1 < 20cm erkennt
+   • "Look far away!" - Wenn Sensor 2 < 30cm erkennt
+
+4. BEDIENTASTEN
+-----------------
+   • Taste Lernen (GPIO 26):
+     - Erster Druck: Beginnt eine Lernsession (beendet automatisch laufende Schlafsession falls aktiv)
+     - Zweiter Druck: Beendet die Lernsession
+   
+   • Taste Schlafen (GPIO 27):
+     - Erster Druck: Beginnt eine Schlafsession (beendet automatisch laufende Lernsession falls aktiv)
+     - Zweiter Druck: Beendet die Schlafsession
+
+5. ZEITBERECHNUNG
+----------------------
+   • Lern-/Schlafzeit wird als Gesamtzeit der letzten 24 Stunden berechnet
+   • Beinhaltet auch die aktuell aktive Session
+   • Punktzahl = Schlafzeit - Lernzeit (kann negativ sein)
+
+6. AUTOMATISCHE PAUSE
+-------------------------
+   • Nach 45 Minuten ununterbrochenem Lernen:
+     - Lernsession wird automatisch beendet
+     - Grüne LED leuchtet für 5 Minuten
+     - Summer ertönt für 2 Sekunden
+     - Anzeige "REST 5 MINUTES"
+
+7. HALTUNGSWARNUNG
+------------------
+   • Ultraschallsensor 1 (schlechte Haltung):
+     - Wenn Abstand < 20cm: Rote LED + Summer + Warnung
+   
+   • Ultraschallsensor 2 ("zu nah am Tisch"):
+     - Wenn Abstand < 30cm: Rote LED + Warnung
+
+8. LICHTWARNUNG
+---------------------
+   • Wenn LDR unzureichendes Licht erkennt (GPIO 4 liest HIGH):
+     - Rote LED einschalten
+     - Warnung "Turn on lamp!" anzeigen
+
+9. UMWELTWARNUNGEN
+-----------------------
+   • Hohe Luftfeuchtigkeit (> 80%): "High hum, open door!"
+   • Niedrige Luftfeuchtigkeit (< 40%): "Low hum, drink water!"
+
+================================================================================
+IV. SCHWELLWERTEINSTELLUNGEN
+================================================================================
+
+Alle Schwellwerte sind am Anfang der main.cpp-Datei im Abschnitt "THRESHOLD VALUES" definiert:
+
+   • STUDY_TIME_MAX_HOURS = 6.0        (Warnung, wenn Lernen > 6 Stunden)
+   • SLEEP_TIME_MIN_HOURS = 7.0       (Warnung, wenn Schlaf < 7 Stunden)
+   • STUDY_WARNING_TIME_MINUTES = 45  (Automatische Pause nach 45 Minuten)
+   • GREEN_LED_DURATION_MINUTES = 5   (Grüne LED leuchtet 5 Minuten)
+   • HUMIDITY_HIGH_THRESHOLD = 80.0   (Hohe Luftfeuchtigkeit > 80%)
+   • HUMIDITY_LOW_THRESHOLD = 40.0    (Niedrige Luftfeuchtigkeit < 40%)
+   • ULTRASONIC1_THRESHOLD_CM = 20    (Warnung bei schlechter Haltung < 20cm)
+   • ULTRASONIC2_THRESHOLD_CM = 30    (Warnung "zu nah am Tisch" < 30cm)
+
+Um die Schwellwerte zu ändern, passen Sie einfach diese Werte an.
